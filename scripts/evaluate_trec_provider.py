@@ -22,7 +22,7 @@ from scripts.benchmark_inference_latency import digest
 PROTOCOL = {"method": "listwise_score", "request_profile": "general-ir-v1",
             "window_size": 20, "step_size": 10, "top_k": 100,
             "tokenizer": "cl100k_base", "query_max_tokens": 32, "passage_max_tokens": 128}
-MODELS = ("jev-1.13.0", "gpt-5.6-luna", "gpt-6-astra")
+MODELS = ("jev-1.13.0", "openjev", "gpt-5.6-luna", "gpt-6-astra")
 STOP_HTTP = {400, 401, 403, 404, 429, 503, 529}
 STOP_CODES = {"rate_limit_exceeded", "insufficient_quota", "invalid_api_key", "authentication_error",
               "permission_denied", "server_overloaded", "overloaded_error"}
@@ -94,16 +94,16 @@ def categorical_scores(request, sample, model):
     return {"answers": {qid: {"type": "score", "score": value} for qid, value in decisions.items()}}
 
 
-def jev_scores(request, sample):
+def jev_scores(request, sample, model="jev-1.13.0"):
     """Retain strict failures while allowing declared mass-only scalar analysis."""
     response = sample["response"]
     try:
-        jev_api.validate(request, response, "jev-1.13.0")
+        jev_api.validate(request, response, model)
     except ValueError as error:
         require(str(error) == "probabilities do not sum to one" and
                 sample.get("error") == str(error) and sample.get("success") is False,
                 "Jev error is not eligible for supplemental scalar analysis")
-    require(response["model"] == "jev-1.13.0" and set(response["answers"]) == set(request["questions"]),
+    require(response["model"] == model and set(response["answers"]) == set(request["questions"]),
             "Jev model or question coverage differs")
     usage = response.get("usage", {})
     require(type(usage.get("input_tokens")) is int and usage["input_tokens"] >= 0, "Missing token usage")
@@ -147,6 +147,9 @@ def run(input_path, input_sha256, output, model, key, *, max_requests=873, timeo
     is_openai = model in openai_api.MODEL_SETTINGS
     provider = openai_api if is_openai else jev_api
     attempt_fn = attempt_fn or provider.attempt
+    if not is_openai:
+        # TypeSafe stays default; OpenJEV uses api.openjev.sh with model "openjev".
+        jev_api.configure_provider("openjev" if model == "openjev" else "typesafe")
     started = clock()
     report = {"schema_version": 1, "usage": "evaluation_only", "status": "running", "model": model,
               "created_at": datetime.now(timezone.utc).isoformat(), "input_sha256": input_sha256,
@@ -271,7 +274,7 @@ def run(input_path, input_sha256, output, model, key, *, max_requests=873, timeo
                             require(sample.get("success") is True, sample.get("error", "OpenAI request failed"))
                             adapted, mass_failures = categorical_scores(request, sample, model), []
                         else:
-                            adapted, mass_failures = jev_scores(request, sample)
+                            adapted, mass_failures = jev_scores(request, sample, model)
                         validation["strict_valid"], validation["scalar_usable"] = not mass_failures, True
                         if mass_failures:
                             validation["strict_probability_mass_failure"] = mass_failures
@@ -339,7 +342,8 @@ def main():
     parser.add_argument("--cost-limit-usd", type=float, default=80)
     parser.add_argument("--max-output-tokens", type=int, default=2048)
     args = parser.parse_args()
-    environment = "TYPESAFE_API_KEY" if args.model == "jev-1.13.0" else "OPENAI_API_KEY"
+    environment = "OPENJEV_API_KEY" if args.model == "openjev" else (
+        "TYPESAFE_API_KEY" if args.model == "jev-1.13.0" else "OPENAI_API_KEY")
     key = os.environ.get(environment, "").strip()
     if not key:
         parser.error(environment + " required; no request sent")

@@ -24,6 +24,9 @@ PROVIDERS = {
     "jev": {"model": "jev-1.13.0", "endpoint": "https://api.typesafe.ai", "kind": "typesafe",
             "input_price": .042, "output_price": 0., "options": {}, "probabilities": "native",
             "price_source": "https://docs.typesafe.ai/models"},
+    "openjev": {"model": "openjev", "endpoint": "https://api.openjev.sh", "kind": "typesafe",
+                "input_price": 0., "output_price": 0., "options": {}, "probabilities": "native",
+                "price_source": "https://openjev.sh/dashboard"},
     "luna": {"model": "gpt-5.6-luna", "endpoint": "https://api.openai.com/v1", "kind": "openai_compat",
              "input_price": .2, "output_price": 1.2, "probabilities": "verbalized",
              "options": {"temperature": None, "max_tokens": None, "max_completion_tokens": 4096,
@@ -149,7 +152,7 @@ class StreamLedger:
 def create_adapter(name, key, timeout):
     config = PROVIDERS[name]
     module = importlib.import_module("jevbench.adapters." + config["kind"])
-    cls = module.TypeSafeAdapter if name == "jev" else module.OpenAICompatAdapter
+    cls = module.TypeSafeAdapter if name in ("jev", "openjev") else module.OpenAICompatAdapter
     inner = cls(endpoint=config["endpoint"], model=config["model"], key_env=KEY_ENV, timeout_s=timeout,
                 price_input_per_m=config["input_price"], price_output_per_m=config["output_price"])
     inner.request_options = config["options"].copy()
@@ -232,7 +235,7 @@ def run(args):
     if len(set(args.providers)) != len(args.providers):
         raise ValueError("Provider streams cannot repeat")
     upstream = benchmark.load_upstream(args.upstream)
-    keys = {name: read_key(args.jev_key_file if name == "jev" else args.openai_key_file) for name in args.providers}
+    keys = {name: read_key(args.jev_key_file if name == "jev" else (args.openjev_key_file if name == "openjev" else args.openai_key_file)) for name in args.providers}
     output = private_output(args.output_root)
     output.mkdir(parents=True, exist_ok=False)
     ledger_path = private_output(args.ledger) if args.ledger else output / "ledger.jsonl"
@@ -267,14 +270,15 @@ def main(argv=None):
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--jev-key-file", type=Path)
+    parser.add_argument("--openjev-key-file", type=Path)
     parser.add_argument("--openai-key-file", type=Path)
-    parser.add_argument("--providers", nargs="+", choices=list(PROVIDERS), default=list(PROVIDERS))
+    parser.add_argument("--providers", nargs="+", choices=list(PROVIDERS), default=["jev", "luna", "astra"])
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--cap-usd", type=float, default=25)
     parser.add_argument("--request-timeout", type=float, default=120)
     parser.add_argument("--provider-timeout", type=float, default=3600)
     args = parser.parse_args(argv)
-    if ("jev" in args.providers and args.jev_key_file is None) or (set(args.providers) & {"luna", "astra"} and args.openai_key_file is None):
+    if ("jev" in args.providers and args.jev_key_file is None) or ("openjev" in args.providers and args.openjev_key_file is None) or (set(args.providers) & {"luna", "astra"} and args.openai_key_file is None):
         parser.error("Selected providers require their private key-file arguments")
 
     def interrupted(_signum, _frame):

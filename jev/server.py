@@ -62,7 +62,7 @@ def make_server(predictor, host="127.0.0.1", port=8791, *, static_root=None,
                 return self.send(200, {"models": [{"id": predictor.model_name, "name": predictor.model_name,
                                                    "description": "Open-Jev local " + predictor.method,
                                                    "release_date": "2026-09-19", "method": predictor.method}],
-                                       "aliases": ["open-jev", "jev-latest"]})
+                                       "aliases": ["open-jev", "jev-latest", "openjev"]})
             if path == "/examples.json":
                 files = []
                 for candidate in root.rglob("*.json"):

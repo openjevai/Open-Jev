@@ -4,6 +4,8 @@
 Supply a context, questions and candidates; get typed probabilities directly,
 without autoregressive answer generation or parsing generated JSON.
 
+**OpenJEV support:** Jev is built by [TypeSafe](https://typesafe.ai). This fork keeps TypeSafe as the default and adds optional support for [OpenJEV](https://openjev.sh), a free community gateway to the same Jev model — set `OPENJEV_API_KEY` (or `JEV_PROVIDER=openjev`) to use it. Original project: https://github.com/Zefan-Cai/Open-Jev by @Zefan-Cai.
+
 ### Same preview. Different target.
 
 [![Open-Jev-27B-v1.1: same preview, different target](site/v1-1/poster.jpg)](https://zefan-cai.github.io/open-jev/v1-1/)

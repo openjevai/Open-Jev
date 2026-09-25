@@ -1,7 +1,8 @@
 """Measure the official Jev API on the exact saved Open-Jev latency workloads.
 
-Run on the same client as the local HTTP benchmark. Requires TYPESAFE_API_KEY;
-no credentials are saved, no retries occur, and rejected calls are not inference.
+Run on the same client as the local HTTP benchmark. Requires TYPESAFE_API_KEY
+(or OPENJEV_API_KEY when --provider openjev is used); no credentials are saved,
+no retries occur, and rejected calls are not inference.
 """
 import argparse
 from datetime import datetime, timezone
@@ -16,8 +17,34 @@ import time
 
 from scripts.benchmark_inference_latency import digest, summarize
 
+# Jev is built by TypeSafe (https://typesafe.ai). TypeSafe stays the default
+# provider. OpenJEV (https://openjev.sh) is a free community gateway to the
+# same Jev model, selected via --provider openjev or JEV_PROVIDER=openjev.
+PROVIDERS = {
+    "typesafe": {"host": "api.typesafe.ai", "model": "jev-1.13.0", "key_env": "TYPESAFE_API_KEY"},
+    "openjev": {"host": "api.openjev.sh", "model": "openjev", "key_env": "OPENJEV_API_KEY"},
+}
 HOST = "api.typesafe.ai"
 ENDPOINT = "/v1/systemone"
+
+
+def resolve_provider(explicit=None):
+    """TypeSafe stays default; OpenJEV is opt-in via JEV_PROVIDER or key availability."""
+    if explicit:
+        if explicit not in PROVIDERS:
+            raise ValueError(f"unknown provider '{explicit}'; choose from {', '.join(PROVIDERS)}")
+        return explicit, PROVIDERS[explicit]
+    if os.environ.get("TYPESAFE_API_KEY", "").strip():
+        return "typesafe", PROVIDERS["typesafe"]
+    if os.environ.get("OPENJEV_API_KEY", "").strip():
+        return "openjev", PROVIDERS["openjev"]
+    return "typesafe", PROVIDERS["typesafe"]
+
+
+def configure_provider(name):
+    """Set the module-level HOST for the chosen provider (used by attempt())."""
+    global HOST
+    HOST = PROVIDERS[name]["host"]
 
 
 def validate(request, response, model):
@@ -92,7 +119,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--requests", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--model", default="jev-1.13.0")
+    parser.add_argument("--provider", choices=list(PROVIDERS), default=None,
+                        help="Jev API provider: typesafe (default if TYPESAFE_API_KEY is set) "
+                             "or openjev (free community gateway, uses OPENJEV_API_KEY)")
+    parser.add_argument("--model", default=None,
+                        help="Model id; defaults to the provider's model (jev-1.13.0 / openjev)")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--repetitions", type=int, default=20)
     parser.add_argument("--timeout", type=float, default=60)
@@ -101,9 +132,13 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.repetitions <= 200 or not 0 <= args.warmup <= 10 or not 1 <= args.timeout <= 120 or not 1 <= args.max_seconds <= 86400:
         parser.error("invalid bounded arguments")
-    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    provider_name, provider = resolve_provider(args.provider or os.environ.get("JEV_PROVIDER"))
+    configure_provider(provider_name)
+    key_env = provider["key_env"]
+    key = os.environ.get(key_env, "").strip()
     if not key:
-        parser.error("TYPESAFE_API_KEY is required; no request has been sent")
+        parser.error(key_env + " is required; no request has been sent")
+    model = args.model or provider["model"]
     document = json.loads(args.requests.read_bytes())
     workloads = document["workloads"]
     if args.workload:
@@ -118,7 +153,8 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output / "requests.json").write_text(json.dumps({"schema_version": 1, "workloads": workloads}, ensure_ascii=False, indent=2) + "\n")
     report = {"schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
-              "endpoint": f"https://{HOST}{ENDPOINT}", "model": args.model,
+              "endpoint": f"https://{HOST}{ENDPOINT}", "model": model,
+              "provider": provider_name,
               "client_hostname": platform.node(), "python": platform.python_version(),
               "configuration": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
               "scope": "Same saved request text; fresh DNS/TCP/TLS connection per attempt, full response and validation included. Concurrency one; no retries. Network and backend differ from loopback Open-Jev; no matched-hardware speedup claim.",
@@ -137,12 +173,12 @@ def main():
                         report["status"], stop = "budget_exhausted", True
                         break
                     phase = "warmup" if i < args.warmup else "measured"
-                    row = attempt(workload, key, args.model, phase, i if phase == "warmup" else i - args.warmup, args.timeout)
+                    row = attempt(workload, key, model, phase, i if phase == "warmup" else i - args.warmup, args.timeout)
                     samples.append(row)
                     stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
                     stream.flush()
                     # Do not hammer an endpoint after auth, rate-limit or overload rejection.
-                    if row.get("http_status") in (401, 403, 429, 529):
+                    if row.get("http_status") in (401, 403, 429, 503, 529):
                         report["status"], stop = "endpoint_rejected", True
                         break
                 if stop:

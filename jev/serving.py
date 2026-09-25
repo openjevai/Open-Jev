@@ -54,8 +54,8 @@ class Predictor:
     def predict(self, request):
         if not isinstance(request, dict) or not {"state", "questions"} <= request.keys():
             raise ValueError("request requires state and questions")
-        # jev-latest is an explicit wire-compatibility alias, not a TypeSafe model.
-        if request.get("model") not in (None, "open-jev", "jev-latest", self.model_name):
+        # jev-latest and openjev are wire-compatibility aliases, not TypeSafe/OpenJEV models.
+        if request.get("model") not in (None, "open-jev", "jev-latest", "openjev", self.model_name):
             raise ValueError("requested model is not loaded; see /v1/models")
         if not isinstance(request["questions"], dict) or len(request["questions"]) > self.max_questions:
             raise ValueError("questions must be an object within the server question limit")

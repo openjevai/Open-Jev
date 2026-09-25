@@ -224,6 +224,8 @@ version; no current data, label, model or score was changed.
 
 Build from the frozen local corpora, then use the environment variables
 `TYPESAFE_API_KEY` and `OPENAI_API_KEY`. Never store keys in source or results.
+OpenJEV (`OPENJEV_API_KEY`) is an optional free community gateway to the same
+Jev model — pass `--provider openjev` to use it instead of TypeSafe.
 
 ```bash
 python -m scripts.build_provider_suite --output data/provider-comparison-v1
